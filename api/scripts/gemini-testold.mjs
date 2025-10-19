@@ -23,7 +23,7 @@ console.log('[gemini-test] Credentials file:', credentialsPath);
 
 try {
   const vertexAI = new VertexAI({ project, location });
-  const model = vertexAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+  const model = vertexAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
   console.log('[gemini-test] Sending prompt...');
   const prompt = "Hello Gemini! Say 'connected successfully 🚀'";

@@ -1,19 +1,18 @@
-// api/scripts/es-test.mjs  ✅ Clean version for Node 18+
+// api/scripts/es-test.mjs ✅ Clean version for Node 18+
 import path from "path";
 import { fileURLToPath } from "url";
 import { config } from "dotenv";
 import { Client } from "@elastic/elasticsearch";
 
-// Resolve current directory and .env inside /api
+// --- Resolve .env path ---
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ENV_PATH = path.resolve(__dirname, '../.env'); // ✅ correct (one level up)
+const ENV_PATH = path.resolve(__dirname, "../.env");
 
-// Load environment variables
+// --- Load environment variables ---
 config({ path: ENV_PATH, override: true, debug: true });
-
 console.log("[env] Loaded from:", ENV_PATH);
 
-// ---- Elasticsearch connection ----
+// --- Elasticsearch setup ---
 const url = process.env.ELASTIC_URL?.trim();
 const apiKey = process.env.ELASTIC_API_KEY?.trim();
 const indexName = process.env.ELASTIC_INDEX || "quizgen-ai";
@@ -28,30 +27,52 @@ if (!url.includes(":443")) {
   process.exit(1);
 }
 
-// Create Elasticsearch client
 const client = new Client({
   node: url,
   auth: { apiKey },
 });
 
+// --- Run test ---
 (async () => {
   try {
     console.log("[es-test] Connecting to:", url);
 
-    // Test connection
+    // Ping test
     const ping = await client.ping();
     console.log("[es-test] ✅ Ping success:", ping);
 
-    // Identify current user
+    // Auth check
     const me = await client.transport.request({
       method: "GET",
       path: "/_security/_authenticate",
     });
     console.log("[es-test] 👤 Authenticated as:", me.user?.username);
 
-    // Check index existence
+    // Index existence
     const exists = await client.indices.exists({ index: indexName });
     console.log(`[es-test] 📦 Index "${indexName}" exists:`, exists);
+
+    // --- New part: List sample documents ---
+    if (exists) {
+      console.log(`\n🔍 Listing first 3 docs in "${indexName}"...\n`);
+      const { hits } = await client.search({
+        index: indexName,
+        size: 3,
+        query: { match_all: {} },
+      });
+
+      if (hits.hits.length === 0) {
+        console.log("⚠️ No documents found in index yet.");
+      } else {
+        hits.hits.forEach((h, i) => {
+          console.log(`Doc ${i + 1}:`);
+          console.log("  docId:", h._source?.docId);
+          console.log("  page:", h._source?.page);
+          console.log("  text snippet:", h._source?.text?.slice(0, 150));
+          console.log("––––––––––––––––––––––––––––––––––––––––––");
+        });
+      }
+    }
 
     process.exit(0);
   } catch (err) {

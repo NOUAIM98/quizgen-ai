@@ -6,40 +6,62 @@ export default function Home() {
   const [docId, setDocId] = useState("");
   const [msg, setMsg] = useState("");
 
-  const backend = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
+  const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
   async function onUpload(e) {
     e.preventDefault();
-    if (!file || !title || !docId) return setMsg("Fill all fields and choose a PDF.");
+    if (!file) return setMsg("Choose a PDF.");
+
     const fd = new FormData();
     fd.append("file", file);
-    fd.append("title", title);
-    fd.append("docId", docId);
+    if (title) fd.append("title", title); // optional
 
     try {
-      const resp = await fetch(`${backend}/upload`, { method: "POST", body: fd });
+      const resp = await fetch(`${API_BASE}/api/upload`, { method: "POST", body: fd });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error || "Upload failed");
-      setMsg(`Indexed ${data.chunksIndexed} chunks ✅`);
+      setDocId(data.docId);
+      setMsg(`Indexed ${data.chunksIndexed} chunks • docId: ${data.docId}`);
     } catch (err) {
       setMsg(err.message);
     }
   }
 
+  function copyId() {
+    if (!docId) return;
+    navigator.clipboard.writeText(docId);
+    setMsg("docId copied!");
+  }
+
   return (
     <main className="min-h-screen flex items-center justify-center bg-gray-100 p-8">
       <div className="w-full max-w-xl bg-white rounded-2xl shadow p-6 space-y-4">
-        <h1 className="text-2xl font-bold text-purple-700">QuizGen AI — Upload Course PDF</h1>
-        <input className="input" placeholder="Title" value={title} onChange={(e)=>setTitle(e.target.value)} />
-        <input className="input" placeholder="Doc ID (unique)" value={docId} onChange={(e)=>setDocId(e.target.value)} />
-        <input type="file" accept="application/pdf" onChange={(e)=>setFile(e.target.files?.[0])} />
-        <button onClick={onUpload} className="px-4 py-2 bg-purple-700 text-white rounded-xl">Upload & Index</button>
+        <h1 className="text-2xl font-bold text-purple-700">QuizGen-AI — Upload PDF</h1>
+
+        <input className="input" placeholder="Title (optional)"
+               value={title} onChange={(e)=>setTitle(e.target.value)} />
+        <input type="file" accept="application/pdf"
+               onChange={(e)=>setFile(e.target.files?.[0] || null)} />
+
+        <button onClick={onUpload}
+          className="px-4 py-2 bg-purple-700 text-white rounded-xl">Upload & Index</button>
+
+        {docId && (
+          <div className="rounded-lg bg-purple-50 p-3 text-sm">
+            <div className="font-medium">docId</div>
+            <div className="break-all">{docId}</div>
+            <div className="mt-2 flex gap-3">
+              <button onClick={copyId} className="px-3 py-1 rounded bg-white border">Copy</button>
+              <a className="px-3 py-1 rounded bg-purple-600 text-white"
+                 href={`/quiz?docId=${encodeURIComponent(docId)}&n=15`}>Use for Quiz</a>
+              <a className="px-3 py-1 rounded border" href={`/chat?docId=${encodeURIComponent(docId)}`}>Ask Chat</a>
+            </div>
+          </div>
+        )}
+
         <p className="text-sm text-gray-600">{msg}</p>
-        <div className="flex gap-3 text-sm pt-2">
-          <a className="text-purple-700 underline" href="/chat">Go to Chat</a>
-          <a className="text-purple-700 underline" href="/quiz">Generate Quiz</a>
-        </div>
       </div>
+
       <style jsx>{`
         .input{border:1px solid #e5e7eb;border-radius:12px;padding:10px;width:100%}
       `}</style>

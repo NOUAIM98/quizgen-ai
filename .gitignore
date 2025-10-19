@@ -144,3 +144,8 @@ dist
 .DS_Store
 # Google Cloud key
 api/*.json
+.env
+*.json
+api/*.json
+*.key
+*.pem

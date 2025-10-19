@@ -1,103 +1,96 @@
-import React, { useState } from "react";
+// api/routes/quiz.js
+import express from "express";
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import { Client } from "@elastic/elasticsearch";
+import dotenv from "dotenv";
+import path from "path";
+import { fileURLToPath } from "url";
+import { ensureIndex } from "../utils/elastic.js"; // keep same utils path if needed
 
-export default function QuizPage() {
-  const [topic, setTopic] = useState("");
-  const [quiz, setQuiz] = useState([]);
-  const [loading, setLoading] = useState(false);
+const router = express.Router();
 
-  const handleGenerate = async () => {
-    if (!topic) return alert("Please enter a topic!");
-    setLoading(true);
-    setQuiz([]);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.resolve(__dirname, "../.env") });
 
-    try {
-      const res = await fetch("http://localhost:8080/quiz/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ topic }),
-      });
+// ---- Elastic client
+const es = new Client({
+  node: process.env.ELASTIC_URL,
+  auth: { apiKey: process.env.ELASTIC_API_KEY },
+});
+const ES_INDEX = process.env.ELASTIC_INDEX || "quizgen";
 
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to generate quiz");
+// ---- Gemini client
+const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
+const model = genAI.getGenerativeModel({ model: "gemini-2.0-pro" });
 
-      console.log("✅ Quiz received:", data);
-      setQuiz(data.quiz || []);
-    } catch (err) {
-      alert("Error generating quiz");
-      console.error("❌ Error:", err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div
-      style={{
-        padding: "40px",
-        maxWidth: "700px",
-        margin: "auto",
-        textAlign: "center",
-      }}
-    >
-      <h1 style={{ fontSize: "2rem", color: "#4B0EAC" }}>🎯 QuizGen-AI</h1>
-
-      <div style={{ marginTop: "20px" }}>
-        <input
-          type="text"
-          placeholder="Enter a topic..."
-          value={topic}
-          onChange={(e) => setTopic(e.target.value)}
-          style={{
-            padding: "10px",
-            width: "70%",
-            borderRadius: "8px",
-            border: "1px solid #ccc",
-          }}
-        />
-        <button
-          onClick={handleGenerate}
-          disabled={loading}
-          style={{
-            padding: "10px 20px",
-            marginLeft: "10px",
-            backgroundColor: "#4B0EAC",
-            color: "white",
-            border: "none",
-            borderRadius: "8px",
-            cursor: "pointer",
-          }}
-        >
-          {loading ? "Generating..." : "Generate Quiz"}
-        </button>
-      </div>
-
-      {quiz.length > 0 && (
-        <div style={{ marginTop: "40px", textAlign: "left" }}>
-          <h2>🧩 Generated Quiz:</h2>
-          {quiz.map((q, i) => (
-            <div
-              key={i}
-              style={{
-                marginBottom: "20px",
-                padding: "15px",
-                border: "1px solid #e5e5e5",
-                borderRadius: "10px",
-                background: "#fafafa",
-              }}
-            >
-              <h3>{i + 1}. {q.question}</h3>
-              <ul>
-                {q.options.map((opt, j) => (
-                  <li key={j}>{opt}</li>
-                ))}
-              </ul>
-              <p>
-                <b>Answer:</b> {q.answer}
-              </p>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
+// ---- helper to gather text by docId
+async function getDocTextById(docId, maxChars = 8000) {
+  if (!docId) return "";
+  const { hits } = await es.search({
+    index: ES_INDEX,
+    size: 1000,
+    query: { term: { docId } },
+    sort: [{ page: "asc" }],
+    _source: ["text"],
+  });
+  const fullText = hits.hits.map(h => h._source?.text || "").join("\n");
+  return fullText.slice(0, maxChars);
 }
+
+// ---- /api/quiz/generate
+router.post("/generate", async (req, res) => {
+  try {
+    let { topic = "", docId = "", n = 10 } = req.body || {};
+    n = Math.max(5, Math.min(30, Number(n) || 10));
+
+    if (!topic && !docId) {
+      return res.status(400).json({ ok: false, error: "Provide topic or docId" });
+    }
+
+    await ensureIndex();
+
+    const context = docId
+      ? await getDocTextById(docId)
+      : `Topic: ${topic}`;
+
+    const prompt = `
+Return ONLY valid JSON array. No explanations.
+Schema:
+[
+  {"question": "?", "options": ["A","B","C","D"], "answer": "A|B|C|D", "explanation": "one line"}
+]
+Rules:
+- Create ${n} MCQs.
+- Use only this context if available.
+- Make questions distinct and not too trivial.
+Context:
+"""${context}"""
+`;
+
+    const result = await model.generateContent(prompt);
+    const text = result.response.text();
+
+    // extract JSON safely
+    const match = text.match(/\[[\s\S]*\]/);
+    const quiz = match ? JSON.parse(match[0]) : [];
+
+    // store in Elastic
+    await es.index({
+      index: ES_INDEX,
+      document: {
+        topic: topic || `(doc:${docId})`,
+        docId: docId || null,
+        quiz,
+        createdAt: new Date().toISOString(),
+      },
+      refresh: "wait_for",
+    });
+
+    res.json({ ok: true, quiz, count: quiz.length });
+  } catch (err) {
+    console.error("❌ /quiz/generate:", err);
+    res.status(500).json({ ok: false, message: err.message });
+  }
+});
+
+export default router;

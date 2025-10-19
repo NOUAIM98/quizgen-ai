@@ -27,21 +27,18 @@ app.use(pinoHttp({ logger }));
 app.use(express.json({ limit: "1mb" }));
 
 // ✅ Fix CORS issue for frontend (Vite @5173)
-app.use(
-  cors({
-    origin: "http://localhost:5173", // must match your frontend
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-  })
-);
-
-// ✅ Handle preflight requests (important!)
-app.options("*", cors());
-
+app.use(cors({
+   origin: ["http://localhost:5173", "http://localhost:3000"],
+   methods: ["GET","POST","PUT","DELETE","OPTIONS"],
+    allowedHeaders: ["Content-Type","Authorization"],
+    credentials: true,
+  }));
+  app.options("*", cors());
 // 🧩 Initialize Elasticsearch index
 ensureIndex()
   .then(() => logger.info("✅ Elasticsearch index verified"))
   .catch((err) => logger.error("❌ Failed to ensure index:", err));
+  app.get("/api/healthz", (_req, res) => res.json({ ok: true }));
 
 // 🧩 Health check route
 app.get("/", (_req, res) => {
@@ -54,9 +51,9 @@ app.get("/quiz/test", (_req, res) => {
 });
 
 // 🧩 API routes
-app.use("/ask", askRouter);
-app.use("/quiz", quizRouter);
-app.use("/upload", uploadRouter);
+app.use("/api/ask", askRouter);
+app.use("/api/quiz", quizRouter);
+app.use("/api/upload", uploadRouter);
 
 // 🧩 Global error handler
 app.use((err, req, res, _next) => {
