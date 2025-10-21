@@ -1,4 +1,14 @@
 import { useState } from "react";
+import { Toaster } from "react-hot-toast";
+import toast from "react-hot-toast";
+
+// UI Components
+import Header from "./components/Header.jsx";
+import Hero from "./components/Hero.jsx";
+import UploadSection from "./components/UploadSection.jsx";
+import Features from "./components/Features.jsx";
+import FloatingElements from "./components/FloatingElements.jsx";
+import QuizDisplay from "./components/QuizDisplay.jsx";
 
 export default function App() {
   const [file, setFile] = useState(null);
@@ -7,53 +17,69 @@ export default function App() {
   const [quiz, setQuiz] = useState([]);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // --- Upload file ---
   async function handleUpload() {
-    if (!file) return alert("Select a PDF first!");
+    if (!file) return toast.error("Please select a PDF file first!");
     setLoading(true);
     setMessage("📤 Uploading file...");
-  
+
     try {
       const form = new FormData();
       form.append("file", file);
-  
+
       const res = await fetch("http://localhost:8080/api/upload", {
         method: "POST",
         body: form,
       });
-  
+
       const data = await res.json();
       if (data.ok && data.docId) {
+        toast.success("✅ Upload complete. Generating quiz...");
         setMessage("✅ Upload complete. Generating quiz...");
         await generateQuiz({ docId: data.docId });
       } else {
+        toast.error("❌ Upload failed!");
         setMessage("❌ Upload failed: " + (data.message || "no document ID"));
       }
     } catch (err) {
+      toast.error("Upload error");
       setMessage("❌ Upload error: " + err.message);
     } finally {
       setLoading(false);
     }
   }
-  
 
+  // --- Generate quiz ---
   async function generateQuiz({ topic = "", docId = "" }) {
+    if (!topic && !docId)
+      return toast.error("Please upload a file or enter a topic!");
     setLoading(true);
     setMessage("⚙️ Generating quiz...");
+
     try {
       const res = await fetch("http://localhost:8080/api/quiz/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ topic, docId, n: num }),
+        body: JSON.stringify({
+          topic: (topic || "").trim(),
+          docId: docId || "",
+          n: Number(num) || 10,
+        }),
       });
+
       const data = await res.json();
 
       if (data.ok) {
+        toast.success(`✅ Generated ${data.count} questions`);
         setQuiz(data.quiz);
         setMessage(`✅ Generated ${data.count} questions`);
       } else {
+        toast.error("Quiz generation failed");
         setMessage(`❌ Quiz generation failed: ${data.message}`);
       }
     } catch (err) {
+      toast.error("Generation error");
       setMessage("❌ Quiz generation error: " + err.message);
     } finally {
       setLoading(false);
@@ -61,101 +87,64 @@ export default function App() {
   }
 
   return (
-    <div style={{ padding: "40px", fontFamily: "sans-serif" }}>
-      <h1 style={{ fontSize: "2rem", color: "#222" }}>QuizGen-AI</h1>
-      <p style={{ color: "#666" }}>Upload a PDF or enter a topic manually</p>
+    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white relative overflow-hidden">
+      <Toaster position="top-right" />
+      <FloatingElements />
 
-      <div style={{ marginBottom: "20px" }}>
-        <label><b>Enter Topic:</b></label>{" "}
-        <input
-          type="text"
-          placeholder="e.g. Artificial Intelligence"
-          value={topic}
-          onChange={(e) => setTopic(e.target.value)}
-          style={{ padding: "6px", width: "250px", marginRight: "10px" }}
-        />
-        <label><b># of Questions:</b></label>{" "}
-        <select
-          value={num}
-          onChange={(e) => setNum(Number(e.target.value))}
-          style={{ marginLeft: "5px", padding: "4px" }}
-        >
-          {[5, 10, 15, 20, 25, 30].map((n) => (
-            <option key={n} value={n}>{n}</option>
-          ))}
-        </select>
-        <button
-          onClick={() => generateQuiz({ topic })}
-          disabled={!topic || loading}
-          style={{
-            marginLeft: "10px",
-            padding: "6px 12px",
-            background: "#4B0EAC",
-            color: "#fff",
-            border: "none",
-            borderRadius: "5px",
-            cursor: "pointer",
-          }}
-        >
-          Generate from Topic
-        </button>
+      {/* Background stars */}
+      <div className="absolute inset-0 opacity-50">
+        {Array.from({ length: 50 }, (_, index) => (
+          <div
+            key={index}
+            className="absolute w-1 h-1 bg-white rounded-full animate-starry"
+            style={{
+              top: `${Math.random() * 100}%`,
+              left: `${Math.random() * 100}%`,
+              animationDelay: `${Math.random() * 3}s`,
+              animationDuration: `${2 + Math.random() * 3}s`,
+            }}
+          />
+        ))}
       </div>
 
-      <div style={{ marginBottom: "20px" }}>
-        <input
-          type="file"
-          accept="application/pdf"
-          onChange={(e) => setFile(e.target.files[0])}
+      {/* Main layout */}
+      <div className="relative z-10">
+        <Header />
+        <Hero />
+        <UploadSection
+          onFileUpload={(f) => setFile(f)}
+          uploadedFile={file ? file.name : null}
+          selectedTopic={topic}
+          onTopicChange={setTopic}
+          questionCount={num}
+          onQuestionCountChange={setNum}
+          onGenerate={() =>
+            file ? handleUpload() : generateQuiz({ topic: topic })
+          }
+          isGenerating={loading}
         />
-        <button
-          onClick={handleUpload}
-          disabled={loading}
-          style={{
-            marginLeft: "10px",
-            padding: "6px 12px",
-            background: "#9C6FE4",
-            color: "#fff",
-            border: "none",
-            borderRadius: "5px",
-            cursor: "pointer",
-          }}
-        >
-          {loading ? "Processing..." : "Upload PDF & Generate"}
-        </button>
+        <Features />
+        {quiz.length > 0 && <QuizDisplay quizzes={quiz} />}
+
+        {message && (
+          <p className="text-center text-gray-400 mt-6 mb-10">{message}</p>
+        )}
+
+        {quiz.length > 0 && (
+          <div className="max-w-3xl mx-auto mt-10 bg-slate-800/30 p-6 rounded-xl border border-slate-700">
+            <h3 className="text-xl font-semibold mb-4 text-blue-400">
+              Generated Quiz
+            </h3>
+            <ul className="space-y-3 text-gray-200">
+              {quiz.map((q, i) => (
+                <li key={i} className="border-b border-slate-700 pb-2">
+                  {i + 1}. {q.question}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </div>
-
-      <p>{message}</p>
-
-      {quiz.length > 0 && (
-        <div style={{ marginTop: "20px" }}>
-          {quiz.map((q, i) => (
-            <div
-              key={i}
-              style={{
-                border: "1px solid #ddd",
-                borderRadius: "10px",
-                padding: "12px",
-                marginBottom: "12px",
-                background: "#fafafa",
-              }}
-            >
-              <strong>{i + 1}. {q.question}</strong>
-              <ul style={{ listStyle: "none", padding: 0 }}>
-                {q.options.map((opt, j) => (
-                  <li key={j}>• {opt}</li>
-                ))}
-              </ul>
-              <details>
-                <summary style={{ color: "#4B0EAC", cursor: "pointer" }}>
-                  Show Answer
-                </summary>
-                <p><b>Answer:</b> {q.answer}</p>
-                <p><b>Why:</b> {q.explanation}</p>
-              </details>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }

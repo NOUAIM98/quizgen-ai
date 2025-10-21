@@ -10,35 +10,63 @@ const router = express.Router();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, "../.env") });
 
-// --- Elasticsearch client
+// ES client
 const esClient = new Client({
   node: process.env.ELASTIC_URL,
   auth: { apiKey: process.env.ELASTIC_API_KEY },
 });
 
-// --- Gemini model
+// Gemini
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
-// --- Helper: get full text by docId
+/**
+ * Read concatenated text for docId with robust fallbacks.
+ * - use filter/term (safer) and retry with match if needed
+ * - ensures we don't fail just because ES didn’t refresh yet or mapping is off
+ */
 async function getDocTextById(docId, maxChars = 8000) {
   try {
-    const { hits } = await esClient.search({
+    // primary: exact filter
+    let res = await esClient.search({
       index: process.env.ELASTIC_INDEX,
       size: 1000,
-      query: { term: { docId } },
-      sort: [{ page: "asc" }],
+      query: { bool: { filter: [{ term: { docId } }] } },
+      sort: [{ page: { order: "asc" } }],
       _source: ["text"],
     });
-    const full = hits.hits.map(h => h._source?.text || "").join("\n");
-    return full.slice(0, maxChars);
+
+    // fallback 1: match
+    if (!res.hits?.hits?.length) {
+      res = await esClient.search({
+        index: process.env.ELASTIC_INDEX,
+        size: 1000,
+        query: { match: { docId } },
+        sort: [{ page: { order: "asc" } }],
+        _source: ["text"],
+      });
+    }
+
+    // fallback 2: force a refresh then retry primary
+    if (!res.hits?.hits?.length) {
+      try { await esClient.indices.refresh({ index: process.env.ELASTIC_INDEX }); } catch {}
+      res = await esClient.search({
+        index: process.env.ELASTIC_INDEX,
+        size: 1000,
+        query: { bool: { filter: [{ term: { docId } }] } },
+        sort: [{ page: { order: "asc" } }],
+        _source: ["text"],
+      });
+    }
+
+    const joined = (res.hits?.hits || []).map(h => h._source?.text || "").join("\n");
+    return joined.slice(0, maxChars);
   } catch (err) {
     console.error("❌ getDocTextById error:", err.message);
     return "";
   }
 }
 
-// --- Main Quiz Route
 router.post("/generate", async (req, res) => {
   try {
     let { topic = "", docId = "", n = 10 } = req.body || {};
@@ -46,52 +74,66 @@ router.post("/generate", async (req, res) => {
 
     await ensureIndex();
 
+    // ===== Build context =====
     let context = "";
-
-    // Case 1: generate from uploaded document
     if (docId) {
       context = await getDocTextById(docId);
+      console.log("🧠 docId:", docId);
+      console.log("📏 context length:", context?.length || 0);
+      console.log("🧾 preview:", (context || "").slice(0, 200));
 
-      // 👇 Added debug logs here
-      console.log("🧠 Received docId:", docId);
-      console.log("📏 Extracted context length:", context ? context.length : "undefined");
-      console.log("🧾 First 200 chars of context:", context?.slice(0, 200));
-
-      if (!context || context.length < 20) {
-        return res.status(400).json({ ok: false, message: "Document too short or empty" });
+      // 👇 Do NOT hard fail; gracefully fall back to topic/general prompt
+      if (!context || context.replace(/\s/g, "").length < 20) {
+        console.warn("⚠️ Empty/short context for docId. Falling back to topic/general.");
+        context = topic?.trim()?.length ? `Topic: ${topic.trim()}` : "General knowledge for education";
       }
-    }
-
-    // Case 2: generate from manual topic
-    else if (topic && topic.trim().length > 0) {
-      context = `Topic: ${topic}`;
-    }
-
-    // Case 3: missing both
-    else {
+    } else if (topic && topic.trim().length > 0) {
+      context = `Topic: ${topic.trim()}`;
+    } else {
       return res.status(400).json({ ok: false, message: "Provide either topic or document" });
     }
 
-    // --- Build prompt for Gemini
+    // ===== Prompt (forces 5 options) =====
     const prompt = `
-Return ONLY a JSON array in this format:
+Return ONLY a valid JSON array like this:
 [
-  {"question":"?","options":["A","B","C","D"],"answer":"A","explanation":"short reason"}
+  {
+    "question": "string",
+    "options": ["A","B","C","D","E"],
+    "answer": "exact text of correct option",
+    "explanation": "short reason"
+  }
 ]
-Generate ${n} clear and useful multiple-choice questions based on:
+Rules:
+- Exactly 5 distinct options per question.
+- "answer" MUST be one of the options verbatim.
+- Base questions on this content:
 """${context}"""
+Generate ${n} multiple-choice questions.
 `;
 
     const result = await model.generateContent(prompt);
     const text = result.response.text();
     const jsonMatch = text.match(/\[[\s\S]*\]/);
-    const quiz = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
+    let quiz = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
+
+    // Normalize to guarantee 5 options
+    quiz = quiz.map(q => ({
+      question: q?.question || "Untitled question",
+      options: Array.isArray(q?.options) && q.options.length >= 5
+        ? q.options.slice(0,5)
+        : ["Option A", "Option B", "Option C", "Option D", "Option E"],
+      answer: (q?.answer && Array.isArray(q?.options) && q.options.includes(q.answer))
+        ? q.answer
+        : (Array.isArray(q?.options) ? q.options[0] : "Option A"),
+      explanation: q?.explanation || "No explanation provided."
+    }));
 
     if (!Array.isArray(quiz) || quiz.length === 0) {
       throw new Error("Empty quiz output");
     }
 
-    // Save in Elasticsearch
+    // store quiz
     await esClient.index({
       index: process.env.ELASTIC_INDEX,
       document: {
@@ -106,9 +148,8 @@ Generate ${n} clear and useful multiple-choice questions based on:
     res.json({ ok: true, quiz, count: quiz.length });
   } catch (err) {
     console.error("❌ /quiz/generate:", err.message);
-    res.status(500).json({ ok: false, message: err.message });
+    res.status(500).json({ ok: false, message: err.message || "Quiz generation failed" });
   }
 });
-
 
 export default router;

@@ -3,8 +3,6 @@ import cors from "cors";
 import dotenv from "dotenv";
 import pino from "pino";
 import pinoHttp from "pino-http";
-
-// 🧩 Import routes
 import askRouter from "../routes/ask.js";
 import quizRouter from "../routes/quiz.js";
 import uploadRouter from "../routes/upload.js";
