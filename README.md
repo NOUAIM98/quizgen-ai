@@ -1,231 +1,214 @@
-Here’s your **final complete README.md** with the added `.env.example` section and polished formatting — fully ready for GitHub ✅
+```markdown
+# QuizGen-AI
+
+Turn PDFs or topics into **context-aware quizzes** using **Elastic** (hybrid search) + **Google Cloud (Cloud Run, Firebase, Gemini 2.5 Flash)**. Built for the **AI Accelerate Hackathon – Elastic + Google Cloud**.
 
 ---
 
-# **QuizGen-AI**
+## 🔗 Live
 
-## 🚀 Project Overview
-
-**QuizGen-AI** is a hackathon project built for the **AI Accelerate Hackathon (Elastic + Google Cloud Challenge)**.
-The app turns uploaded PDFs into **context-aware quizzes** by combining **Elastic Serverless Search**, **Google Cloud Run**, **Firebase Hosting**, and **Vertex AI’s Gemini 2.5 Flash** model.
-
-The goal is to demonstrate **hybrid search with generative AI** while delivering an educational tool that produces instant, high-quality assessments from learning material.
+- **Web App:** https://quizgen-ai-18d50.web.app  
+- **Backend (Cloud Run):** https://quizgen-api-86664155509.us-central1.run.app
 
 ---
 
 ## ✨ Features
 
-* 🔒 **Secure PDF upload** pipeline with text extraction via `pdf-js` and `pdf-parse` fallback.
-* 🔎 **Elastic-powered indexing and retrieval** scoped by `docId`.
-* 🧠 **Quiz generation with Gemini 2.5 Flash**, ensuring:
-
-  * Exactly **five options per MCQ**
-  * **Answer always included** in options
-  * **Concise explanations**
-* ⚡ **Smart fallback** to topic-based quizzes when uploaded text is insufficient.
-* 📊 **Inline observability** logs chunk counts and text lengths (no separate debug route).
-* 🏁 Ready for hackathon deliverables: live demo hosting, MIT license, and 3-minute demo video.
+- Upload PDF → extract → chunk → **index in Elastic** (scoped by `docId`)
+- **Quiz generation** with **Gemini 2.5 Flash (v1)**:
+  - 5 options per MCQ, **answer included**, short explanation
+- **Fallback** to topic-based quiz when text is insufficient
+- **CORS allowlist** for web.app/firebaseapp.com + localhost
 
 ---
 
-## 🧰 Tech Stack
+## 🧰 Stack
 
-| Layer                 | Technology                                          |
-| --------------------- | --------------------------------------------------- |
-| **Frontend**          | React, hosted on **Firebase Hosting**               |
-| **Backend**           | Node.js + Express, deployed on **Google Cloud Run** |
-| **Search**            | **Elastic Serverless Search** (GCP endpoint)        |
-| **AI**                | **Gemini 2.5 Flash API** via **Vertex AI**          |
-| **Storage / Hosting** | **Google Cloud Platform**, **Firebase**             |
+| Layer      | Tech |
+|-----------|------|
+| Frontend  | React (Vite) + **Firebase Hosting** |
+| Backend   | Node.js + Express on **Cloud Run** |
+| AI        | **Vertex AI – Gemini 2.5 Flash (v1)** |
+| Search    | **Elastic Cloud** (Serverless / managed) |
+| Tooling   | gcloud CLI, Firebase CLI |
 
 ---
 
-## 🏗️ Architecture Diagram
-
-*(Placeholder — add `docs/architecture.png` or similar illustration)*
+## 🏗️ Architecture
 
 ```
-[Client] --upload--> [Express API] --index--> [Elastic Search]
-          \--request quiz--> [Gemini 2.5 Flash via Vertex AI] --> [Client UI]
-```
+
+[Web (Firebase)]  --fetch-->  [Cloud Run API]
+|                          |---> Elastic: index/query (docId, hybrid)
+|                          |---> Vertex AI: Gemini 2.5 Flash (v1)
+└────────── quiz JSON <────┘
+
+````
 
 ---
 
-## 🧩 API Endpoints
+## 📡 API
 
-### **POST /api/upload**
+### POST `/api/upload`
+- `multipart/form-data`: `file=@<pdf>`
+- Extracts text, chunks, indexes to Elastic under `docId`.
 
-**Request:**
+**Response**
+```json
+{ "ok": true, "docId": "e72c...", "title": "file.pdf", "chunksIndexed": 37, "textLen": 12345 }
+````
 
-* Multipart form-data with PDF file.
-  **Process:**
-* Extracts text using `pdf-js`, falls back to `pdf-parse`.
-* Chunks and indexes content into Elasticsearch under a generated `docId`.
-  **Response:**
+### POST `/api/quiz/generate`
+
+* Body (one of):
+
+```json
+{ "docId": "e72c...", "numQuestions": 10 }
+```
+
+```json
+{ "topic": "education", "numQuestions": 10 }
+```
+
+**Response**
 
 ```json
 {
-  "docId": "string",
-  "chunkCount": 12,
-  "message": "Indexed successfully"
+  "ok": true,
+  "count": 10,
+  "quiz": [{
+    "question": "What is ...?",
+    "options": ["A","B","C","D","E"],
+    "answer": "B",
+    "explanation": "..."
+  }]
 }
 ```
 
 ---
 
-### **POST /api/quiz/generate**
+## ⚙️ Local Dev
 
-**Request:**
-
-```json
-{
-  "docId": "string",
-  "n": 5
-}
-```
-
-**Process:**
-
-* Fetches indexed text, builds prompt, calls **Gemini 2.5 Flash**.
-* Ensures 5 options per question, includes valid answer + explanation.
-* If text is insufficient, generates a topic-based quiz.
-  **Response:**
-
-```json
-{
-  "questions": [
-    {
-      "question": "string",
-      "options": ["A", "B", "C", "D", "E"],
-      "answer": "B",
-      "explanation": "string"
-    }
-  ],
-  "sourceMeta": {}
-}
-```
-
----
-
-## ⚙️ Installation & Setup
-
-### **Prerequisites**
-
-* Node.js **v18+**
-* Yarn or npm
-* Firebase CLI
-* gcloud CLI
-
----
-
-### **Local Setup**
+### 1) Clone
 
 ```bash
 git clone https://github.com/NOUAIM98/quizgen-ai.git
 cd quizgen-ai
-npm install
 ```
 
----
+### 2) Environment
 
-### **Environment Variables**
-
-Create `.env` files for both backend (`/server/.env`) and frontend if needed.
-
-#### 📄 Example `.env.example`
+**`/api/.env.example`**
 
 ```env
-# Elastic Search Configuration
-ELASTIC_URL=https://your-elastic-instance.es.amazonaws.com
-ELASTIC_API_KEY=your-elastic-api-key
-ELASTIC_INDEX=quizgen-docs
+# Google / Vertex AI
+GOOGLE_API_KEY=YOUR_GOOGLE_API_KEY
+GEMINI_MODEL=gemini-2.5-flash
 
-# Google AI / Vertex API Key
-GOOGLE_API_KEY=your-vertex-api-key
+# Elastic
+ELASTIC_URL=https://my-elasticsearch-project-xxxx.es.us-central1.gcp.elastic.cloud:443
+ELASTIC_INDEX=myquizproject
+ELASTIC_API_KEY=BASE64_ID_COLON_APIKEY  # id:apikey -> base64
 
-# Optional (Frontend)
-REACT_APP_API_URL=https://your-cloud-run-service-url
+
+
+**`/app/.env.example`**
+
+```env
+VITE_API=https://quizgen-api-86664155509.us-central1.run.app
 ```
 
-> ⚠️ Ensure you have access to **Vertex AI Gemini 2.5 Flash** and proper **Elasticsearch** permissions before running locally.
+> Copy each `.env.example` to `.env` (or `.env.production` for frontend) and fill values.
+
+### 3) Run
+
+```bash
+# backend
+cd api
+npm i
+npm run dev  # http://localhost:8080
+
+# frontend
+cd ../app
+npm i
+npm run dev  # http://localhost:5173
+```
 
 ---
 
-### **Running Locally**
+## ☁️ Deployment
+
+### A) Cloud Run (backend)
+
+**Bash / zsh**
 
 ```bash
-# Backend
-cd server
-npm run dev
-
-# Frontend
-cd ../web
-npm start
+cd api
+gcloud run deploy quizgen-api --region us-central1 --source . \
+  --allow-unauthenticated \
+  --set-env-vars "GOOGLE_API_KEY=$GOOGLE_API_KEY,GEMINI_MODEL=gemini-2.5-flash,ELASTIC_URL=https://my-elasticsearch-project-xxxx.es.us-central1.gcp.elastic.cloud:443,ELASTIC_INDEX=myquizproject,ELASTIC_API_KEY=$ELASTIC_API_KEY,CORS_ALLOWED_ORIGINS=https://quizgen-ai-18d50.web.app,https://quizgen-ai-18d50.firebaseapp.com,http://localhost:5173,http://localhost:3000"
 ```
 
----
+**PowerShell**
 
-## ☁️ Deployment Guide
-
-### **Backend → Google Cloud Run**
-
-```bash
-# Build container image
-gcloud builds submit --tag gcr.io/<project-id>/quizgen-api
-
-# Deploy service
-gcloud run deploy quizgen-api \
-  --image gcr.io/<project-id>/quizgen-api \
-  --region <region> \
-  --allow-unauthenticated
+```powershell
+cd api
+gcloud run deploy quizgen-api --region us-central1 --source . `
+  --allow-unauthenticated `
+  --set-env-vars "GOOGLE_API_KEY=$env:GOOGLE_API_KEY,GEMINI_MODEL=gemini-2.5-flash,ELASTIC_URL=https://my-elasticsearch-project-xxxx.es.us-central1.gcp.elastic.cloud:443,ELASTIC_INDEX=myquizproject,ELASTIC_API_KEY=$env:ELASTIC_API_KEY,CORS_ALLOWED_ORIGINS=https://quizgen-ai-18d50.web.app,https://quizgen-ai-18d50.firebaseapp.com,http://localhost:5173,http://localhost:3000"
 ```
 
-Then set your environment variables:
+**Smoke test**
 
 ```bash
-gcloud run services update quizgen-api \
-  --set-env-vars ELASTIC_URL=...,ELASTIC_API_KEY=...,GOOGLE_API_KEY=...
+curl -s https://<run-app>/api/healthz
+curl -s https://<run-app>/api/quiz/ping
 ```
 
-Add the Cloud Run **HTTPS URL** to your frontend `.env`.
-
----
-
-### **Frontend → Firebase Hosting**
+### B) Firebase Hosting (frontend)
 
 ```bash
-# Inside /web
+cd app
+# point to Cloud Run
+echo VITE_API=https://<run-app> > .env.production
 npm run build
-firebase init hosting
 firebase deploy --only hosting
 ```
 
-✅ Configure frontend to use the Cloud Run API endpoint.
-✅ Verify that upload and quiz generation both work.
+---
+
+## 🔬 cURL Quick Tests (prod)
+
+```bash
+# Topic quiz
+curl -s -X POST "https://<run-app>/api/quiz/generate" \
+  -H "Content-Type: application/json" \
+  -d '{"topic":"education","numQuestions":5}'
+
+# Upload then quiz by docId
+curl -s -X POST "https://<run-app>/api/upload" -F "file=@./docs/sample.pdf"
+# -> take docId from response:
+curl -s -X POST "https://<run-app>/api/quiz/generate" \
+  -H "Content-Type: application/json" \
+  -d '{"docId":"PUT_DOCID","numQuestions":5}'
+```
 
 ---
 
-## 📦 Hackathon Submission Notes
+## 📝 Hackathon Submission
 
-* Public GitHub repo with `README.md` and `LICENSE`
-* Hosted live demo (Firebase + Cloud Run URLs)
-* 3-minute demo video uploaded to YouTube
-* Add both URLs to your **Devpost submission**
-
----
-
-## 📜 License
-
-This project is licensed under the **MIT License**.
-See the [LICENSE](./LICENSE) file for details.
+* Live app + backend URL (above)
+* Public GitHub repo with **README** + **LICENSE**
+* 3-minute demo video (YouTube/Vimeo)
+* Select **Elastic Challenge** on Devpost
 
 ---
 
-## 🙌 Acknowledgements
+## 🔒 Notes
 
-* **Elastic + Google Cloud Hackathon 2025** organizers and mentors
-* **Google Cloud Run**, **Firebase Hosting**, **Vertex AI**, and **Elastic Serverless** teams for their tools and APIs
-* Built with ❤️ by **Mohamed Nouaim El Aakil**
+* Only **Gemini 2.5 Flash (v1)** is used; no other LLMs
+* No secrets in repo; all env via **Cloud Run**
+* CORS allowlist enforced for web.app/firebaseapp.com + localhost
 
 ---
 
