@@ -36,12 +36,12 @@ Turn PDFs or topics into **context-aware quizzes** using **Elastic** (hybrid sea
 
 ## 🏗️ Architecture
 
-```
-
-[Web (Firebase)]  --fetch-->  [Cloud Run API]
-|                          |---> Elastic: index/query (docId, hybrid)
-|                          |---> Vertex AI: Gemini 2.5 Flash (v1)
-└────────── quiz JSON <────┘
+```bash
+[Web (Firebase)] 
+   └── fetch → [Cloud Run API]
+          ├──→ [ElasticSearch] : index/query (docId, hybrid)
+          └──→ [Vertex AI: Gemini 2.5 Flash (v1)]
+                   └── quiz JSON ←──
 
 ````
 
