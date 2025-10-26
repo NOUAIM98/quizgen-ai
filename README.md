@@ -193,17 +193,6 @@ curl -s -X POST "https://<run-app>/api/quiz/generate" \
   -d '{"docId":"PUT_DOCID","numQuestions":5}'
 ```
 
----
-
-## 📝 Hackathon Submission
-
-* Live app + backend URL (above)
-* Public GitHub repo with **README** + **LICENSE**
-* 3-minute demo video (YouTube/Vimeo)
-* Select **Elastic Challenge** on Devpost
-
----
-
 ## 🔒 Notes
 
 * Only **Gemini 2.5 Flash (v1)** is used; no other LLMs
